@@ -44,4 +44,3 @@ class TestWeb(unittest.TestCase):
         # s = conn.hlen('login:')
         # print(s)
         # self.assertFalse(s)
-

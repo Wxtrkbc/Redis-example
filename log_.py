@@ -1,7 +1,12 @@
 # coding=utf-8
+
 import logging
 import time
+import json
 from datetime import datetime
+import functools
+import redis
+from contextlib import contextmanager
 
 SEVERITY = {
     logging.DEBUG: 'debug',
@@ -14,7 +19,11 @@ SEVERITY = {
 SEVERITY.update([(name, name) for name in SEVERITY.values()])
 PRECISION = [1, 5, 60, 300, 3600, 18000, 86400]
 QUIT = False
-
+LAST_CHECKED = None
+IS_UNDER_MAINTENANCE = False
+CONFIGS = {}
+CHECKED = {}
+REDIS_CONNECTIONS = {}
 
 """
  known:   zset
@@ -127,3 +136,63 @@ def clean_counters(conn):
         duration = min(int(time.time() - start) + 1, 60)
         time.sleep(max(60 - duration, 1))
 
+
+def is_under_maintenance(conn):
+    global LAST_CHECKED, IS_UNDER_MAINTENANCE
+    if LAST_CHECKED < time.time() - 1:
+        LAST_CHECKED = time.time()
+        IS_UNDER_MAINTENANCE = bool(conn.get('is-under-maintenance'))
+
+    return IS_UNDER_MAINTENANCE
+
+
+def set_config(conn, type, component, config):
+    conn.set('config:{}:{}'.format(type, component), json.dumps(config))
+
+
+def get_config(conn, type, component, wait=1):
+    key = 'config:{}:{}'.format(type, component)
+    if CHECKED.get(key) < time.time() - wait:
+        CHECKED[key] = time.time()
+        config = json.loads(conn.get(key) or '{}')
+        config = dict((str(k), config[k]) for k in config)
+        old_config = CONFIGS.get(key)
+        if config != old_config:
+            CONFIGS[key] = config
+    return CONFIGS.get(key)
+
+
+def redis_connection(component, wait=1):
+    key = 'config:redis:' + component
+
+    def wrapper(func):
+        @functools.wraps(func)
+        def call(*args, **kwargs):
+            old_config = CONFIGS.get(key, object())
+            _config = get_config(config_connection, 'redis', component, wait)
+            config = {k: _config[k].encode('utf-8') for k in _config}
+
+            if config != old_config:
+                REDIS_CONNECTIONS[key] = reids.Redis(**config)
+            return func(REDIS_CONNECTIONS.get(key), *args, **kwargs)
+        return call
+    return wrapper
+
+
+# @redis_connection('log')
+# def log_recent(conn, app, message):
+#     pass
+#
+# log_recent('main', 'User 233 login in ')
+
+@contextmanager
+def access_time(conn, context):
+    start = time.time()
+    yield
+    spend = time.time() - start
+    conn.set('{}:{}'.format(context, spend))
+
+
+def process_view(conn, callback):
+    with access_time(conn, request):
+        return callback()
