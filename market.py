@@ -1,5 +1,6 @@
 # coding=utf-8
 import time
+import redis
 
 
 def list_item(conn, itemid, sellerid, price):
@@ -9,12 +10,12 @@ def list_item(conn, itemid, sellerid, price):
     pipe = conn.pipeline()
     while time.time() < end:
         try:
-            pipe.watch(inventory) # 监视用户包裹发生的变化
+            pipe.watch(inventory)  # 监视用户包裹发生的变化
             if not pipe.sismember(inventory, itemed):
                 pipe.unwatch()
                 return None
 
-            pipe.multi()  #  开始新的事物
+            pipe.multi()  # 开始新的事物
             pipe.zadd("market:", item, price)
             pipe.srem(inventory, itemid)
             pipe.execute()
@@ -29,7 +30,8 @@ def purchase_item(conn, buyerid, itemid, sellerid, lprice):
     seller = "users:{}".format(sellerid)
     item = "{}.{}".format(itemid, sellerid)
     inventory = "inventory:{}".format(buyerid)
-    end = conn.pipeline()
+    pipe = conn.pipeline()
+    end = time.time() + 10
 
     while time.time() < end:
         try:
